@@ -1,14 +1,16 @@
 # =============================================================================
 # Author: CWM
-# Purpose: Shiny version for runtime tool
+# Purpose: Shiny version vizualizer
 # =============================================================================
 library(shiny)
+library(tidyverse)
 library(shinyvalidate)
 library(shinyjs)
 library(shinythemes)
 library(jsonlite)
 library(waiter)
 library(jsonlite)
+library(DT)
 
 # =============================================================================
 ui <- fluidPage(
@@ -59,15 +61,41 @@ ui <- fluidPage(
   selectInput("json_obj", selectize = T,
               "Available run.JSON objects:", 
               choices = c()),
+  hr(),
   
-  # Run files
-  actionButton("run_JSON", "Run prjs",
-               style = paste(
-                 "color: #fff;",
-                 "background-color: #337ab7;",
-                 "border-color: #2e6da4"
-               )
+  # the payload
+  tabsetPanel(
+    type = "tabs",
+    
+    # Select via the data table
+    tabPanel(
+      "Select files", 
+      DT::dataTableOutput('rj_table')
+    ),
+    
+    # Show box-plots arranged in facet grid
+    tabPanel(
+      "Boxplot",
+      helpText("Shows daily averages"),
+      plotOutput("boxplot")
+    ),
+    
+    # Show hourlys
+    tabPanel(
+      "Diurnal",
+      helpText("Shows diurnal patterns"),
+      plotOutput("diurnal")
+    ),
+    
+    # Show summary stats
+    tabPanel(
+      "Summary stats",
+      helpText("Shows summary stats"),
+      DT::dataTableOutput('summary_stats')
+    )
+    
   ),
+  
   
   # copyright
   hr(),
@@ -79,9 +107,10 @@ ui <- fluidPage(
 # =============================================================================
 server <- function(input, output, session) {
   
-  # waiting button
-  w <- Waiter$new(id = "run_JSON")
-  
+  # waiting buttons
+  w_box <- Waiter$new(id = "boxplot")
+  w_diurnal <- Waiter$new(id = "diurnal")
+  w_stats <- Waiter$new(id = "summary_stats")
   
   # ---------------------------------------
   # validators
@@ -103,7 +132,6 @@ server <- function(input, output, session) {
   
   # --------------------------------------
   # make a new JSON if a file is uploaded
-  # >> Update this each time you add a new tabset
   observe({
     
     updateSelectInput(session, 
@@ -114,15 +142,135 @@ server <- function(input, output, session) {
   })
   
   # --------------------------------------
-  # What happens when you want to create new PRJs
-  observeEvent(input$run_JSON, {
-    # show the spinner
-    w$show() 
+  # f_name data_frame
+  all_opts <- reactive({
+    # new json object? kick it off
+    out_dir <- input$out_dir
+    rj <- input$json_obj
     
+    # 1. load rj
+    files_to_run <- read_json(file.path(out_dir, "01_torun", rj))
+    for(i in seq(files_to_run)) {
+      files_to_run[[i]]$f_name = names(files_to_run)[[i]]
+    }
+    
+    # 2. iterate through, and make the table, include a unique identifier, 
+    #    or just hide the column that is the super long row name
+    #
+    #    This probably involves an Rbind of a `long` format of the `opts` object, 
+    #    followed by a pivot_wider to make the table, and fill with "NA" or similar
+    #    so that different levels of `opts` are allowed
+    #
+    do.call(rbind, lapply(files_to_run, function(x) {
+      x_df <- data.frame(x) %>% 
+        select(starts_with("opts.")) %>%
+        pivot_longer(cols = everything(), names_to = "opt")
+      x_df$name <- x$f_name
+      x_df$opt <- gsub("opts.", "", x_df$opt, fixed = T, perl = F)
+      x_df
+    })) %>% pivot_wider(id_cols = name, names_from = opt)
+    
+  })
+  
+  # render the f_name table
+  output$rj_table <- DT::renderDataTable(
+    all_opts(), 
+    options = list(scrollX = T,
+                   columnDefs = list(list(visible = F, targets = 1)),
+                   pageLength = 10)
+  )
+  
+  # --------------------------------------
+  # for the boxplot
+  output$boxplot <- renderPlot({
+    
+    # show the spinner
+    w_box$show()
+    
+    df <- all_opts()
+    
+    # load in based on
+    s <- input$rj_table_rows_selected
+
+    contam_data_raw <- lapply(s, function(i) {
+      x <- df$name[i]
+      x2 <- readRDS(file.path(input$out_dir, "02_outputs", x, 
+                              paste0(x, ".RDS")))
+      x2$sim_name <- x
+      x2
+    })
     
     # hide the spinner
-    w$hide()
+    w_box$hide()
+    
+    # finalize
+    contam_data <- do.call(rbind, contam_data_raw)
+    
+    # the plot
+    contam_data %>%
+      group_by(Date, Season, ctm, unit, generic_name, name, sim_name) %>%
+      summarize(mean_conc = mean(value_converted),
+                .groups = "keep") %>%
+      ggplot(.) +
+      geom_boxplot(aes(x = unit, 
+                       y = mean_conc, 
+                       fill = sim_name), outlier.size = 0.25) +
+      theme_bw() +
+      facet_grid(. ~ unit) +
+      theme(legend.position = "bottom",
+            legend.direction = "vertical")
+    
   })
+  
+  # --------------------------------------
+  # for the diurnal
+  output$diurnal <- renderPlot({
+    
+    # show the spinner
+    w_diurnal$show()
+    
+    df <- all_opts()
+    
+    # load in based on
+    s <- input$rj_table_rows_selected
+    
+    contam_data_raw <- lapply(s, function(i) {
+      x <- df$name[i]
+      x2 <- readRDS(file.path(input$out_dir, "02_outputs", x, 
+                              paste0(x, ".RDS")))
+      x2$sim_name <- x
+      x2
+    })
+    
+    # hide the spinner
+    w_diurnal$hide()
+    
+    # finalize
+    contam_data <- do.call(rbind, contam_data_raw)
+    
+    # the plot
+    contam_data %>%
+      group_by(Hour, ctm, unit, generic_name, name, sim_name) %>%
+      summarize(mean_conc = mean(value_converted),
+                q25 = quantile(value_converted, probs = .25),
+                q75 = quantile(value_converted, probs = .75),
+                .groups = "keep") %>%
+      ggplot(., aes(x = Hour, y = mean_conc, color = sim_name, fill = sim_name,
+                    ymin = q25, ymax = q75)) +
+      geom_ribbon(color = NA, alpha = 0.2) +
+      geom_line() +
+      geom_point() +
+      theme_bw() +
+      facet_grid(. ~ unit) +
+      theme(legend.position = "bottom",
+            legend.direction = "vertical")
+    
+  })
+  
+  # --------------------------------------
+  # for the summary stats
+  
+  
 }
 # =============================================================================
 shinyApp(ui, server)
