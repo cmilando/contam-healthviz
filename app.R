@@ -6,7 +6,7 @@ library(shiny)
 library(tidyverse)
 library(shinyvalidate)
 library(shinyjs)
-library(shinythemes)
+library(bslib)
 library(jsonlite)
 library(waiter)
 library(jsonlite)
@@ -17,7 +17,7 @@ library(spsComps)
 ui <- fluidPage(
   
   # theme
-  theme = shinytheme("flatly"),
+  theme = bs_theme(bootswatch = "flatly"),
   
   # multi-column checkbox html
   tags$head(
