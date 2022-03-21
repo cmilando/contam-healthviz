@@ -54,7 +54,7 @@ ui <- fluidPage(
   textInput("out_dir",
             "File path for outputs (e.g., C:\\tmp\\contam)",
             width = "100%",
-            value = "D:\\BU_backup\\contam_test\\ASTHMA_database\\0_final"
+            value = "K:\\CONTAM_database"
   ),
   
   helpText("By default, json objs are looked for in the `01_torun` folder"),
@@ -216,6 +216,8 @@ server <- function(input, output, session) {
       
       # show the spinner
       w_box$show()
+
+      timestamp(suffix = "> make boxplot")
       
         # finalize
       contam_data_x <- contam_data()
@@ -233,7 +235,7 @@ server <- function(input, output, session) {
                          y = mean_conc, 
                          fill = sim_name), outlier.size = 0.25) +
         theme_bw() +
-        facet_grid(. ~ unit) +
+        #facet_grid(. ~ unit) +
         theme(legend.position = "bottom",
               legend.direction = "vertical")
     })
@@ -247,6 +249,8 @@ server <- function(input, output, session) {
     
       # show the spinner
       w_diurnal$show()
+      
+      timestamp(suffix = "> make diurnal")
       
       # finalize
       contam_data_x <- contam_data()
