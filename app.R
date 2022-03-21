@@ -91,8 +91,14 @@ ui <- fluidPage(
     # Show summary stats
     tabPanel(
       "Summary stats",
-      helpText("Shows summary stats"),
+      helpText("Shows summary stats -- takes a minute to load"),
       DT::dataTableOutput('summary_stats')
+    ),
+    
+    # Show summary stats
+    tabPanel(
+      "Aggregate",
+      helpText("Table and functions to aggregate various RDS files into one (daily etc)")
     )
     
   ),
@@ -145,6 +151,10 @@ server <- function(input, output, session) {
   # --------------------------------------
   # f_name data_frame
   all_opts <- reactive({
+  
+    # require validation before conintuing
+    req(iv$is_valid())
+  
     shinyCatch({
       # new json object? kick it off
       out_dir <- input$out_dir
@@ -281,7 +291,45 @@ server <- function(input, output, session) {
   
   # --------------------------------------
   # for the summary stats
+  # render the f_name table
+  contam_summary_table <- reactive({
+    
+    # show the spinner
+    w_stats$show()
+    
+    timestamp(suffix = "> get summary stats")
+    
+    # get filtered table 1
+    df <- all_opts()
+    s <- input$rj_table_rows_selected
+    df_sub <- df[s, ]
+    
+    # get data
+    contam_data_x <- contam_data()
+
+    sum1 <- contam_data_x %>%
+      group_by(sim_name, name) %>%
+      summarize(
+        .groups = 'keep',
+        mean_conc = signif(mean(value_converted), 2),
+        sd_conc = signif(sd(value_converted), 2)
+      ) %>%
+      rename(zone_name = name)
+    
+    # hide spinner
+    w_stats$hide()
+    
+    # left_join with df_sum
+    merge(df_sub, sum1, by.x = "name", by.y = "sim_name")
+    
+  })
   
+  output$summary_stats <- DT::renderDataTable(
+    contam_summary_table(), 
+    options = list(scrollX = T,
+                   columnDefs = list(list(visible = F, targets = 1)),
+                   pageLength = 10)
+  )
   
 }
 # =============================================================================
